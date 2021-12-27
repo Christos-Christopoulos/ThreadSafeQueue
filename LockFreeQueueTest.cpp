@@ -1,6 +1,8 @@
 #include "LockFreeQueue.h"
 #include <iostream>
 #include <mutex>
+#include <vector>
+#include <memory>
 
 class Printer
 {
