@@ -17,6 +17,23 @@ public:
     LockFreeQueue() = default;
     ~LockFreeQueue() = default;
 
+    // Make the queue non copyable.
+    LockFreeQueue(const LockFreeQueue&) = delete;
+    LockFreeQueue& operator=(const LockFreeQueue&) = delete;
+
+    /** Push data into the queue.
+     * 
+     *  The purpose of the "push" function is to push data into the queue.
+     * 
+     *  The assigned thread will wait if needed in order for space to be 
+     *  created in the queue.
+     *  
+     *  However, once a space has been claimed, access to the queue is 
+     *  released and other threads can use the queue while the data is 
+     *  copied into the claimed space.
+     * 
+     *  @arg bufferItem - the data to be pushed into the queue.
+     */
     void push(QueueItemT bufferItem) {
 
         size_t newTail{};
@@ -58,6 +75,23 @@ public:
         _hasData.at(pushIndex).store(true, std::memory_order_relaxed);
     }
 
+    /** Pop data from the queue.
+     * 
+     *  The purpose of the "pop" function is to extract data from the queue.
+     * 
+     *  The assigned thread will claim the space containing the next available 
+     *  data. If there is no data, the thread will return false and will not 
+     *  wait for data to become available.
+     *  
+     *  However, once a space has been claimed, access to the queue is 
+     *  released and other threads can use the queue while the data is 
+     *  returned back to the caller.
+     * 
+     *  @arg popedData - the location to put the extracted data into.
+     * 
+     *  @return return true if there was data available to return back 
+     *          to the caller, otherwise return false.
+     */
     bool pop(QueueItemT& popedData) {
 
         std::optional<size_t> popIndex;
@@ -120,6 +154,15 @@ public:
     }
 
 private:
+    /** Put the thread to sleep.
+     * 
+     *  The purpose of the "backOff" function is to put the thread to sleep.
+     *  The sleep duration increases linearly until a threashold is reached.
+     * 
+     *  @arg sleepDuration - the current value of the sleep duration.
+     * 
+     *  @return the updated value of the sleep duration
+     */
     SleepGranularity backOff(SleepGranularity sleepDuration) {
 
         if (sleepDuration < _maxSleepDuration) {
