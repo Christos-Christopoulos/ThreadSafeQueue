@@ -30,3 +30,13 @@
 *.exe
 *.out
 *.app
+
+# Ignore everything
+*
+
+# But not these files...
+!.gitignore
+!CMakeLists.txt
+!README.md
+!*.cpp
+!*.h
