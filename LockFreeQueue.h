@@ -34,7 +34,7 @@ public:
 
             if (newTail != _head.load(std::memory_order_relaxed) &&    // When _tail + 1 == _head we can not add.
                 !_hasData.at(_tail.load(std::memory_order_relaxed)
-                                  ).load(std::memory_order_acquire)) { // Check that there is no data at the tail index
+                                  ).load(std::memory_order_relaxed)) { // Check that there is no data at the tail index
 
                 pushIndex = _tail.load(std::memory_order_relaxed);
                 _tail.store(newTail, std::memory_order_relaxed);
@@ -55,7 +55,7 @@ public:
 
         _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully pushed data.
 
-        _hasData.at(pushIndex).store(true, std::memory_order_release);
+        _hasData.at(pushIndex).store(true, std::memory_order_relaxed);
     }
 
     bool pop(QueueItemT& popedData) {
@@ -71,7 +71,7 @@ public:
                 _tail.load(std::memory_order_relaxed)) { // When head == tail we can not remove
 
                 if (_hasData.at(_head.load(std::memory_order_relaxed)
-                                     ).load(std::memory_order_acquire)) { // Check that the producer thread managed 
+                                     ).load(std::memory_order_relaxed)) { // Check that the producer thread managed 
                                                                           // to commit data to the _head index.
 
                     popIndex = _head.load(std::memory_order_relaxed);
@@ -97,7 +97,7 @@ public:
         if (popIndex.has_value()) {
 
             popedData = _buffer.at(*popIndex);
-            _hasData.at(*popIndex).store(false, std::memory_order_release);
+            _hasData.at(*popIndex).store(false, std::memory_order_relaxed);
 
             assert(_pendingData.load(std::memory_order_relaxed) > 0); // We should have _pendingData > 0
             _pendingData.fetch_add(-1, std::memory_order_relaxed); // We removed data from the queue.
@@ -112,11 +112,11 @@ public:
     }
 
     bool hasData() { // Check if there is any data in the queue.
-        return _pendingData.load(std::memory_order_relaxed) > 0;
+        return _pendingData.load(std::memory_order_consume) > 0;
     }
 
     bool hasWork() { // Check if there are any pending actions.
-        return _pendingActions.load(std::memory_order_relaxed) > 0;
+        return _pendingActions.load(std::memory_order_consume) > 0;
     }
 
 private:

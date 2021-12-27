@@ -112,7 +112,7 @@ bool RunLockFreeQueueTest() {
     auto runRoutine =
         [run = std::ref(run)]()
     {
-        std::this_thread::sleep_for(std::chrono::seconds{ 60 });
+        std::this_thread::sleep_for(std::chrono::minutes{ 2 });
         run.get().store(false);
     };
 
@@ -164,7 +164,11 @@ int main() {
     std::cout << "Test Started!\n";
 
     if (RunLockFreeQueueTest()) {
+
+        std::cout << "Test Passed!\n";
         return 0;
     }
+
+    std::cout << "Test Failed!\n";
     return 1;
 }
