@@ -1,2 +1,3 @@
 LockFreeQueue
-Lock-free implementation of a multi producer/consumer queue in C++.
+
+A lock-free implementation of a multi producer/consumer queue in C++.
