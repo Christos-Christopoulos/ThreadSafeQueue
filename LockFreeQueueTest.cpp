@@ -4,6 +4,17 @@
 #include <vector>
 #include <memory>
 
+std::chrono::nanoseconds backOff(std::chrono::nanoseconds sleepDuration) {
+
+    if (sleepDuration < std::chrono::nanoseconds{100}) {
+        sleepDuration += std::chrono::nanoseconds{1};
+    }
+
+    std::this_thread::sleep_for(sleepDuration);
+
+    return sleepDuration;
+}
+
 class Printer
 {
 public:
@@ -57,20 +68,24 @@ template<typename QueueT>
 class Producer
 {
 public:
-    Producer(QueueT& buffer, std::atomic_bool& ok, std::atomic_bool& run, DataGenerator& dataGenerator)
-        : _buffer{ buffer }, _ok{ ok }, _run{ run }, _dataGenerator{ dataGenerator }
+    Producer(QueueT& queue, std::atomic_bool& ok, std::atomic_bool& run, DataGenerator& dataGenerator)
+        : _queue{ queue }, _ok{ ok }, _run{ run }, _dataGenerator{ dataGenerator }
     {}
 
     ~Producer() = default;
 
     void run() {
+        std::chrono::nanoseconds sleepDuration{ 0 };
         while (_run.load(std::memory_order_relaxed)) {
             auto data = _dataGenerator.generate(_ok);
-            _buffer.push(data);
+            while (!_queue.push(data)) { /*Keep trying until we succeed*/
+                sleepDuration = backOff(sleepDuration);
+            };
+            sleepDuration = std::chrono::nanoseconds{ 0 };
         }
     }
 private:
-    QueueT& _buffer;
+    QueueT& _queue;
     std::atomic_bool& _ok;
     std::atomic_bool& _run;
     DataGenerator& _dataGenerator;
@@ -80,30 +95,43 @@ template<typename QueueT, typename TData>
 class Consumer
 {
 public:
-    Consumer(QueueT& buffer, std::atomic_bool& run)
-        : _buffer{ buffer }, _run{ run }
+    Consumer(QueueT& queue, std::atomic_bool& run)
+        : _queue{ queue }, _run{ run }
     {}
 
     ~Consumer() = default;
 
     void run() {
-        while (_run.load(std::memory_order_relaxed) || _buffer.hasWork()) {
+        std::chrono::nanoseconds sleepDuration{ 0 };
+        while (_run.load(std::memory_order_relaxed)) {
             TData data{};
-            if (_buffer.pop(data)) {
+            if (_queue.pop(data)) {
+                data->poped();
+                sleepDuration = std::chrono::nanoseconds{ 0 };
+            }
+            else {
+                sleepDuration = backOff(sleepDuration);
+            }
+        }
+
+        // Clear any leftover data in the queue.
+        while (_queue.hasWork()) {
+            TData data{};
+            if (_queue.pop(data)) {
                 data->poped();
             }
         }
     }
 private:
-    QueueT& _buffer;
+    QueueT& _queue;
     std::atomic_bool& _run;
 };
 
 bool RunLockFreeQueueTest() {
     using DataT = std::shared_ptr<QueueChecker>;
-    using QueueT = LockFreeQueue<DataT, 4>;
+    using QueueT = LockFreeQueue<DataT, 100>;
 
-    QueueT buffer{};
+    QueueT queue{};
     std::atomic_bool ok{ true };
     DataGenerator dataGenerator{};
 
@@ -112,21 +140,21 @@ bool RunLockFreeQueueTest() {
     auto runRoutine =
         [run = std::ref(run)]()
     {
-        std::this_thread::sleep_for(std::chrono::minutes{ 2 });
+        std::this_thread::sleep_for(std::chrono::minutes{ 30 });
         run.get().store(false);
     };
 
     auto producerRoutine =
-        [buffer = std::ref(buffer), ok = std::ref(ok), run = std::ref(run), dataGenerator = std::ref(dataGenerator)]()
+        [queue = std::ref(queue), ok = std::ref(ok), run = std::ref(run), dataGenerator = std::ref(dataGenerator)]()
     {
-        Producer<QueueT> producer(buffer, ok, run, dataGenerator);
+        Producer<QueueT> producer(queue, ok, run, dataGenerator);
         producer.run();
     };
 
     auto consumerRoutine =
-        [buffer = std::ref(buffer), run = std::ref(run)]()
+        [queue = std::ref(queue), run = std::ref(run)]()
     {
-        Consumer<QueueT, DataT> consumer(buffer, run);
+        Consumer<QueueT, DataT> consumer(queue, run);
         consumer.run();
     };
 
@@ -156,8 +184,8 @@ bool RunLockFreeQueueTest() {
     }
 
     return ok.load(std::memory_order_consume) && // Verify we poped all the data in the queue
-           !buffer.hasWork() && // We should have no pending work.
-           !buffer.hasData(); // We should have no pending data in the queue.;
+        !queue.hasWork() && // We should have no pending work.
+        !queue.hasData(); // We should have no pending data in the queue.
 }
 
 int main() {

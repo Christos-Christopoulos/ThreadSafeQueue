@@ -2,7 +2,7 @@
 
 #include <array>
 #include <string>
-#include<chrono>
+#include <chrono>
 #include <atomic>
 #include <thread>
 #include <optional>
@@ -22,24 +22,24 @@ public:
     LockFreeQueue& operator=(const LockFreeQueue&) = delete;
 
     /** Push data into the queue.
-     * 
+     *
      *  The purpose of the "push" function is to push data into the queue.
      * 
-     *  The assigned thread will wait if needed in order for space to be 
-     *  created in the queue.
-     *  
-     *  However, once a space has been claimed, access to the queue is 
-     *  released and other threads can use the queue while the data is 
+     *  If there is no space, the thread will return false and will not
+     *  wait for space to become available.
+     *
+     *  However, once a space has been claimed, access to the queue is
+     *  released and other threads can use the queue while the data is
      *  copied into the claimed space.
-     * 
+     *
      *  @arg bufferItem - the data to be pushed into the queue.
      */
-    void push(QueueItemT bufferItem) {
+    bool push(QueueItemT bufferItem) {
 
         size_t newTail{};
         bool keepTrying{ true };
         SleepGranularity sleepDuration{ 0 };
-        size_t pushIndex{};
+        std::optional<size_t> pushIndex{ std::nullopt };
 
         _pendingActions.fetch_add(2, std::memory_order_relaxed); // There are 2 pending action, to 
                                                                  // succesfully push and pop the data.
@@ -49,16 +49,21 @@ public:
 
             newTail = (_tail.load(std::memory_order_relaxed) + 1) % bufferSize; // Calculate the new tail
 
-            if (newTail != _head.load(std::memory_order_relaxed) &&    // When _tail + 1 == _head we can not add.
-                !_hasData.at(_tail.load(std::memory_order_relaxed)
-                                  ).load(std::memory_order_relaxed)) { // Check that there is no data at the tail index
+            if (newTail != _head.load(std::memory_order_relaxed)) { // When _tail + 1 == _head we can not add.
 
-                pushIndex = _tail.load(std::memory_order_relaxed);
-                _tail.store(newTail, std::memory_order_relaxed);
+                if (!_isBusy.at(_tail.load(std::memory_order_relaxed)
+                                     ).exchange(true, std::memory_order_relaxed)) { // Check that the index is not busy
+
+                    pushIndex = _tail.load(std::memory_order_relaxed);
+                    _tail.store(newTail, std::memory_order_relaxed);
+                    keepTrying = false;
+                }
+            }
+            else {
                 keepTrying = false;
             }
 
-            _canUpdate.store(true, std::memory_order_relaxed); // Allow access to the critical section for other 
+            _canUpdate.store(true, std::memory_order_release); // Allow access to the critical section for other 
                                                                // threads to update the indexes
 
             if (keepTrying) {// If we keep retrying, try not to overload the CPU
@@ -66,52 +71,62 @@ public:
             }
         } while (keepTrying); // Do work until tail is updated and we can push the data
 
-        _buffer.at(pushIndex) = bufferItem;
+        if (pushIndex.has_value()) {
 
-        _pendingData.fetch_add(1, std::memory_order_relaxed); // We added data in the queue.
+            _buffer.at(*pushIndex) = bufferItem;
 
-        _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully pushed data.
+            _pendingData.fetch_add(1, std::memory_order_relaxed); // We added data in the queue.
 
-        _hasData.at(pushIndex).store(true, std::memory_order_relaxed);
+            _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully pushed data.
+
+            _isBusy.at(*pushIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
+
+            return true; // We succesfully placed the data in the queue.
+        }
+
+        _pendingActions.fetch_add(-2, std::memory_order_relaxed); // We failed to push the data.
+
+        return false; // We did not have space to put the data into the queue.
     }
 
     /** Pop data from the queue.
-     * 
+     *
      *  The purpose of the "pop" function is to extract data from the queue.
-     * 
-     *  The assigned thread will claim the space containing the next available 
-     *  data. If there is no data, the thread will return false and will not 
+     *
+     *  The assigned thread will claim the space containing the next available
+     *  data. If there is no data, the thread will return false and will not
      *  wait for data to become available.
-     *  
-     *  However, once a space has been claimed, access to the queue is 
-     *  released and other threads can use the queue while the data is 
+     *
+     *  However, once a space has been claimed, access to the queue is
+     *  released and other threads can use the queue while the data is
      *  returned back to the caller.
-     * 
+     *
      *  @arg popedData - the location to put the extracted data into.
-     * 
-     *  @return return true if there was data available to return back 
+     *
+     *  @return return true if there was data available to return back
      *          to the caller, otherwise return false.
      */
     bool pop(QueueItemT& popedData) {
 
-        std::optional<size_t> popIndex;
+        std::optional<size_t> popIndex{ std::nullopt };
         bool keepTrying{ true };
         SleepGranularity sleepDuration{ 0 };
 
         do {
             while (!_canUpdate.exchange(false, std::memory_order_acquire)) { /*Wait for access and check index positions.*/ }
 
-            if (_head.load(std::memory_order_relaxed) != 
+            if (_head.load(std::memory_order_relaxed) !=
                 _tail.load(std::memory_order_relaxed)) { // When head == tail we can not remove
 
-                if (_hasData.at(_head.load(std::memory_order_relaxed)
-                                     ).load(std::memory_order_relaxed)) { // Check that the producer thread managed 
-                                                                          // to commit data to the _head index.
+                if (!_isBusy.at(_head.load(std::memory_order_relaxed)
+                                     ).exchange(true, std::memory_order_relaxed)) { // Check that the producer thread managed 
+                                                                                    // to commit data to the _head index and the 
+                                                                                    // index is now not busy.
 
                     popIndex = _head.load(std::memory_order_relaxed);
 
-                    _head.store((_head.load(std::memory_order_relaxed) + 1) % bufferSize, 
-                                std::memory_order_relaxed); // Update the head;
+                    _head.store((_head.load(std::memory_order_relaxed) + 1) % bufferSize,
+                        std::memory_order_relaxed); // Update the head;
 
                     keepTrying = false;
                 }
@@ -120,7 +135,7 @@ public:
                 keepTrying = false;
             }
 
-            _canUpdate.store(true, std::memory_order_relaxed); // Allow access to the critical section for other 
+            _canUpdate.store(true, std::memory_order_release); // Allow access to the critical section for other 
                                                                // threads to update the indexes
 
             if (keepTrying) { // If we keep retrying, try not to overload the CPU
@@ -131,12 +146,18 @@ public:
         if (popIndex.has_value()) {
 
             popedData = _buffer.at(*popIndex);
-            _hasData.at(*popIndex).store(false, std::memory_order_relaxed);
+            _isBusy.at(*popIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
-            assert(_pendingData.load(std::memory_order_relaxed) > 0); // We should have _pendingData > 0
+            // Debug
+            //assert(_pendingData.load(std::memory_order_relaxed) < bufferSize + 1); // We should have _pendingData < bufferSize + 1
+            //assert(_pendingData.load(std::memory_order_relaxed) > 0); // We should have _pendingData > 0
+
             _pendingData.fetch_add(-1, std::memory_order_relaxed); // We removed data from the queue.
 
-            assert(_pendingActions.load(std::memory_order_relaxed) > 0); // We should have _pendingActions > 0
+            // Debug
+            //assert(_pendingActions.load(std::memory_order_relaxed) < 2*bufferSize + 1); // We should have _pendingActions < 2*bufferSize + 1
+            //assert(_pendingActions.load(std::memory_order_relaxed) > 0); // We should have _pendingActions > 0
+
             _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully poped data.
 
             return true; // We succesfully poped data.
@@ -155,12 +176,12 @@ public:
 
 private:
     /** Put the thread to sleep.
-     * 
+     *
      *  The purpose of the "backOff" function is to put the thread to sleep.
      *  The sleep duration increases linearly until a threashold is reached.
-     * 
+     *
      *  @arg sleepDuration - the current value of the sleep duration.
-     * 
+     *
      *  @return the updated value of the sleep duration
      */
     SleepGranularity backOff(SleepGranularity sleepDuration) {
@@ -175,11 +196,11 @@ private:
     }
 
     std::array<QueueItemT, bufferSize> _buffer{}; // the ring buffer
-    std::array<std::atomic_bool, bufferSize> _hasData{ false }; // the buffer tracking data
+    std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // the buffer if there is work pending on each index
     std::atomic<size_t> _head{ 0 }; // consumer index
     std::atomic<size_t> _tail{ 0 }; // producer index
-    std::atomic<size_t> _pendingActions{ 0 }; // count pending actions
-    std::atomic<size_t> _pendingData{ 0 }; // count pending data in the queue
+    std::atomic<long long> _pendingActions{ 0 }; // count pending actions
+    std::atomic<long long> _pendingData{ 0 }; // count pending data in the queue
     std::atomic_bool _canUpdate{ true }; // critical section protection
     SleepGranularity sleepDurationStep{ 1 };
     SleepGranularity _maxSleepDuration{ 100 };
