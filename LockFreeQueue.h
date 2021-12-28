@@ -33,6 +33,9 @@ public:
      *  copied into the claimed space.
      *
      *  @arg bufferItem - the data to be pushed into the queue.
+     * 
+     * @return return true if there was space available to push the data
+     *         into the queue, otherwise return false.
      */
     bool push(QueueItemT bufferItem) {
 
