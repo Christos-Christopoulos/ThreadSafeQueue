@@ -191,7 +191,7 @@ private:
     }
 
     std::array<QueueItemT, bufferSize> _buffer{}; // the ring buffer
-    std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // the buffer if there is work pending on each index
+    std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // track if there is work pending on each index
     std::atomic<size_t> _head{ 0 }; // consumer index
     std::atomic<size_t> _tail{ 0 }; // producer index
     std::atomic<long long> _pendingActions{ 0 }; // count pending actions
