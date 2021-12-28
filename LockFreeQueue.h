@@ -151,15 +151,7 @@ public:
             popedData = _buffer.at(*popIndex);
             _isBusy.at(*popIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
-            // Debug
-            //assert(_pendingData.load(std::memory_order_relaxed) < bufferSize + 1); // We should have _pendingData < bufferSize + 1
-            //assert(_pendingData.load(std::memory_order_relaxed) > 0); // We should have _pendingData > 0
-
             _pendingData.fetch_add(-1, std::memory_order_relaxed); // We removed data from the queue.
-
-            // Debug
-            //assert(_pendingActions.load(std::memory_order_relaxed) < 2*bufferSize + 1); // We should have _pendingActions < 2*bufferSize + 1
-            //assert(_pendingActions.load(std::memory_order_relaxed) > 0); // We should have _pendingActions > 0
 
             _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully poped data.
 
