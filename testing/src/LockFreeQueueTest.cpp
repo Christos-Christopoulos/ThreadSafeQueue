@@ -140,7 +140,7 @@ bool RunLockFreeQueueTest() {
     auto runRoutine =
         [run = std::ref(run)]()
     {
-        std::this_thread::sleep_for(std::chrono::minutes{ 30 });
+        std::this_thread::sleep_for(std::chrono::seconds{ 5 });
         run.get().store(false);
     };
 
