@@ -28,8 +28,9 @@ include(CPack)
 file(GLOB TEST_SOURCES ${CMAKE_CURRENT_LIST_DIR}/testing/src/*.cpp)
 
 # Create the test for the library.
-add_executable(LockFreeQueueTest ${LIBRARY_SOURCES} ${TEST_SOURCES})
+add_executable(LockFreeQueueTest ${TEST_SOURCES})
 target_link_libraries(LockFreeQueueTest LockFreeQueue)
+include_directories(${CMAKE_CURRENT_LIST_DIR}/include)
 
 # define tests
 add_test(
