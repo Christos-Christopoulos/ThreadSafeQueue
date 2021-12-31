@@ -33,9 +33,6 @@ public:
      *  copied into the claimed space.
      *
      *  @arg bufferItem - the data to be pushed into the queue.
-     * 
-     * @return return true if there was space available to push the data
-     *         into the queue, otherwise return false.
      */
     bool push(QueueItemT bufferItem) {
 
@@ -44,8 +41,8 @@ public:
         SleepGranularity sleepDuration{ 0 };
         std::optional<size_t> pushIndex{ std::nullopt };
 
-        _pendingActions.fetch_add(2, std::memory_order_relaxed); // There are 2 pending action, to 
-                                                                 // succesfully push and pop the data.
+        _pendingActions.fetch_add(1, std::memory_order_relaxed); // There is now 1 pending action, to 
+                                                                 // succesfully push the data.
 
         do {
             while (!_canUpdate.exchange(false, std::memory_order_acquire)) { /*Wait for access and check index positions.*/ }
@@ -59,6 +56,7 @@ public:
 
                     pushIndex = _tail.load(std::memory_order_relaxed);
                     _tail.store(newTail, std::memory_order_relaxed);
+
                     keepTrying = false;
                 }
             }
@@ -78,16 +76,25 @@ public:
 
             _buffer.at(*pushIndex) = bufferItem;
 
-            _pendingData.fetch_add(1, std::memory_order_relaxed); // We added data in the queue.
+            _pendingData.fetch_add(1, std::memory_order_acquire); // We added data in the queue.
+                                                                  // Prevent memory reordering above this point.
+
+            // Debug
+            assert(_pendingData.load(std::memory_order_relaxed) <= bufferSize); // We should have _pendingData <= bufferSize
+            assert(_pendingData.load(std::memory_order_relaxed) >= 0); // We should have _pendingData >= 0
 
             _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully pushed data.
+
+            // Debug
+            assert(_pendingActions.load(std::memory_order_relaxed) <= bufferSize); // We should have _pendingActions <= bufferSize
+            assert(_pendingActions.load(std::memory_order_relaxed) >= 0); // We should have _pendingActions >= 0
 
             _isBusy.at(*pushIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
             return true; // We succesfully placed the data in the queue.
         }
 
-        _pendingActions.fetch_add(-2, std::memory_order_relaxed); // We failed to push the data.
+        _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We cannot push any data.
 
         return false; // We did not have space to put the data into the queue.
     }
@@ -111,9 +118,12 @@ public:
      */
     bool pop(QueueItemT& popedData) {
 
-        std::optional<size_t> popIndex{ std::nullopt };
         bool keepTrying{ true };
         SleepGranularity sleepDuration{ 0 };
+        std::optional<size_t> popIndex{ std::nullopt };
+
+        _pendingActions.fetch_add(1, std::memory_order_relaxed); // There is now 1 pending action, to 
+                                                                 // succesfully pop the data.
 
         do {
             while (!_canUpdate.exchange(false, std::memory_order_acquire)) { /*Wait for access and check index positions.*/ }
@@ -149,24 +159,36 @@ public:
         if (popIndex.has_value()) {
 
             popedData = _buffer.at(*popIndex);
-            _isBusy.at(*popIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
-            _pendingData.fetch_add(-1, std::memory_order_relaxed); // We removed data from the queue.
+            _pendingData.fetch_add(-1, std::memory_order_acquire); // We removed data from the queue.
+                                                                   // Prevent memory reordering above this point.
+
+            // Debug
+            assert(_pendingData.load(std::memory_order_relaxed) <= bufferSize); // We should have _pendingData <= bufferSize
+            assert(_pendingData.load(std::memory_order_relaxed) >= 0); // We should have _pendingData >= 0
 
             _pendingActions.fetch_add(-1, std::memory_order_relaxed); // We succesfully poped data.
 
+            // Debug
+            assert(_pendingActions.load(std::memory_order_relaxed) <= bufferSize); // We should have _pendingActions <= bufferSize
+            assert(_pendingActions.load(std::memory_order_relaxed) >= 0); // We should have _pendingActions >= 0
+
+            _isBusy.at(*popIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
+
             return true; // We succesfully poped data.
         }
+
+        _pendingActions.fetch_add(-1, std::memory_order_relaxed); // There is no data available to pop.
 
         return false; // There was no new data available.
     }
 
     bool hasData() { // Check if there is any data in the queue.
-        return _pendingData.load(std::memory_order_consume) > 0;
+        return _pendingData.load(std::memory_order_consume) != 0;
     }
 
     bool hasWork() { // Check if there are any pending actions.
-        return _pendingActions.load(std::memory_order_consume) > 0;
+        return _pendingActions.load(std::memory_order_consume) != 0;
     }
 
 private:
@@ -191,7 +213,7 @@ private:
     }
 
     std::array<QueueItemT, bufferSize> _buffer{}; // the ring buffer
-    std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // track if there is work pending on each index
+    std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // the buffer if there is work pending on each index
     std::atomic<size_t> _head{ 0 }; // consumer index
     std::atomic<size_t> _tail{ 0 }; // producer index
     std::atomic<long long> _pendingActions{ 0 }; // count pending actions
