@@ -1,4 +1,4 @@
-#include "LockFreeQueue.h"
+#include <LockFreeQueue.h>
 #include <iostream>
 #include <mutex>
 #include <vector>
@@ -10,6 +10,7 @@ std::chrono::nanoseconds backOff(std::chrono::nanoseconds sleepDuration) {
         sleepDuration += std::chrono::nanoseconds{1};
     }
 
+    std::this_thread::yield();
     std::this_thread::sleep_for(sleepDuration);
 
     return sleepDuration;
@@ -35,12 +36,14 @@ struct QueueChecker {
 
     ~QueueChecker() {
         if (!_poped.load(std::memory_order_acquire)) {
+            std::cout << "Destroyed unpoped!\n";
             _ok.store(false, std::memory_order_relaxed);
         }
     }
 
     void poped() {
         if (_poped.exchange(true, std::memory_order_acq_rel)) {
+            std::cout << "Poped Twice!\n";
             _ok.store(false, std::memory_order_relaxed);
         }
     }
@@ -79,6 +82,10 @@ public:
         while (_run.load(std::memory_order_relaxed)) {
             auto data = _dataGenerator.generate(_ok);
             while (!_queue.push(data)) { /*Keep trying until we succeed*/
+                if(!_run.load(std::memory_order_relaxed)){
+                    data->poped();
+                    break;
+                }
                 sleepDuration = backOff(sleepDuration);
             };
             sleepDuration = std::chrono::nanoseconds{ 0 };
@@ -115,10 +122,14 @@ public:
         }
 
         // Clear any leftover data in the queue.
-        while (_queue.hasWork()) {
+        while (_queue.hasWork() || _queue.hasData()) {
             TData data{};
             if (_queue.pop(data)) {
                 data->poped();
+                sleepDuration = std::chrono::nanoseconds{ 0 };
+            }
+            else{
+                sleepDuration = backOff(sleepDuration);
             }
         }
     }
@@ -183,9 +194,17 @@ bool RunLockFreeQueueTest() {
         consumerThreads.at(i).join();
     }
 
-    return ok.load(std::memory_order_consume) && // Verify we poped all the data in the queue
-        !queue.hasWork() && // We should have no pending work.
-        !queue.hasData(); // We should have no pending data in the queue.
+    bool okSnap = ok.load(std::memory_order_consume);
+    bool hasWorkSnap = queue.hasWork();
+    bool hasDataSnap = queue.hasData();
+
+    std::cout << "okSnap: " << okSnap << "\n"
+              << "hasWorkSnap: " << hasWorkSnap << "\n"
+              << "hasDataSnap: " << hasDataSnap << "\n";
+
+    return okSnap && // Verify we poped all the data in the queue
+        !hasWorkSnap && // We should have no pending work.
+        !hasDataSnap; // We should have no pending data in the queue.
 }
 
 int main() {

@@ -3,3 +3,6 @@ build
 BuildApp.py
 /.vscode/tasks.json
 /.vscode/launch.json
+*.exe
+*.json
+/include/LockFreeQueue
