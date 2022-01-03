@@ -81,14 +81,6 @@ public:
 
             _pendingActions.fetch_add(-1, std::memory_order_acq_rel); // We succesfully pushed data.
 
-            // Debug
-            //assert(_pendingActions.load(std::memory_order_relaxed) <= static_cast<long long>(2*bufferSize)); // We should have _pendingActions <= 2*bufferSize
-            //assert(_pendingActions.load(std::memory_order_relaxed) >= 0); // We should have _pendingActions >= 0
-
-            // Debug
-            //assert(_pendingData.load(std::memory_order_relaxed) <= static_cast<long long>(bufferSize)); // We should have _pendingData <= bufferSize
-            //assert(_pendingData.load(std::memory_order_relaxed) >= 0); // We should have _pendingData >= 0
-
             _isBusy.at(*pushIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
             return true; // We succesfully placed the data in the queue.
@@ -162,15 +154,7 @@ public:
 
             _pendingActions.fetch_add(-1, std::memory_order_acq_rel); // We succesfully poped data.
 
-            // Debug
-            //assert(_pendingActions.load(std::memory_order_relaxed) <= static_cast<long long>(2*bufferSize)); // We should have _pendingActions <= 2*bufferSize
-            //assert(_pendingActions.load(std::memory_order_relaxed) >= 0); // We should have _pendingActions >= 0
-
             _pendingData.fetch_add(-1, std::memory_order_relaxed); // We removed data from the queue.
-
-            // Debug
-            //assert(_pendingData.load(std::memory_order_relaxed) <= static_cast<long long>(bufferSize)); // We should have _pendingData <= bufferSize
-            //assert(_pendingData.load(std::memory_order_relaxed) >= 0); // We should have _pendingData >= 0
 
             _isBusy.at(*popIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
