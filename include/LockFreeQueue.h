@@ -87,7 +87,7 @@ public:
 
         _pendingActions.fetch_add(-2, std::memory_order_relaxed); // We cannot push any data.
 
-         _pendingData.fetch_add(-1, std::memory_order_relaxed); // We failed to add data in the queue.
+        _pendingData.fetch_add(-1, std::memory_order_relaxed); // We failed to add data in the queue.
 
         return false; // We did not have space to put the data into the queue.
     }
