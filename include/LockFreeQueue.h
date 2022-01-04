@@ -6,7 +6,6 @@
 #include <atomic>
 #include <thread>
 #include <optional>
-#include <assert.h>
 
 template<typename QueueItemT, size_t bufferSize>
 class LockFreeQueue {
@@ -73,7 +72,7 @@ public:
             if (keepTrying) {// If we keep retrying, try not to overload the CPU
                 sleepDuration = backOff(sleepDuration);
             }
-        } while (keepTrying); // Do work until head is updated and there is no more data to pop in the queue
+        } while (keepTrying); // Do work until tail is updated and we can push the data
 
         if (pushIndex.has_value()) {
 
@@ -146,7 +145,7 @@ public:
             if (keepTrying) { // If we keep retrying, try not to overload the CPU
                 sleepDuration = backOff(sleepDuration);
             }
-        } while (keepTrying); // Do work until tail is updated and we can push the data
+        } while (keepTrying); // Do work until head is updated and there is no more data to pop in the queue
 
         if (popIndex.has_value()) {
 
