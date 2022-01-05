@@ -102,8 +102,8 @@ template<typename QueueT, typename TData>
 class Consumer
 {
 public:
-    Consumer(QueueT& queue, std::atomic_bool& run)
-        : _queue{ queue }, _run{ run }
+    Consumer(QueueT& queue, std::atomic_bool& run, std::atomic<unsigned long long>& dataCounter)
+        : _queue{ queue }, _run{ run }, _dataCounter{ dataCounter }
     {}
 
     ~Consumer() = default;
@@ -114,6 +114,7 @@ public:
             TData data{};
             if (_queue.pop(data)) {
                 data->poped();
+                _dataCounter.fetch_add(1, std::memory_order_relaxed);
                 sleepDuration = std::chrono::nanoseconds{ 0 };
             }
             else {
@@ -122,10 +123,11 @@ public:
         }
 
         // Clear any leftover data in the queue.
-        while (_queue.hasWork() || _queue.hasData()) {
+        while (_queue.hasData()) {
             TData data{};
             if (_queue.pop(data)) {
                 data->poped();
+                _dataCounter.fetch_add(1, std::memory_order_relaxed);
                 sleepDuration = std::chrono::nanoseconds{ 0 };
             }
             else{
@@ -136,6 +138,7 @@ public:
 private:
     QueueT& _queue;
     std::atomic_bool& _run;
+    std::atomic<unsigned long long>& _dataCounter;
 };
 
 bool RunLockFreeQueueTest() {
@@ -146,26 +149,29 @@ bool RunLockFreeQueueTest() {
     std::atomic_bool ok{ true };
     DataGenerator dataGenerator{};
 
-    std::atomic_bool run{ true };
+    std::atomic<unsigned long long> dataCounter{0};
+
+    std::atomic_bool runProducer{ true };
+    std::atomic_bool runConsumer{ true };
 
     auto runRoutine =
-        [run = std::ref(run)]()
+        [run = std::ref(runProducer)]()
     {
         std::this_thread::sleep_for(std::chrono::seconds{ 5 });
         run.get().store(false);
     };
 
     auto producerRoutine =
-        [queue = std::ref(queue), ok = std::ref(ok), run = std::ref(run), dataGenerator = std::ref(dataGenerator)]()
+        [queue = std::ref(queue), ok = std::ref(ok), run = std::ref(runProducer), dataGenerator = std::ref(dataGenerator)]()
     {
         Producer<QueueT> producer(queue, ok, run, dataGenerator);
         producer.run();
     };
 
     auto consumerRoutine =
-        [queue = std::ref(queue), run = std::ref(run)]()
+        [queue = std::ref(queue), run = std::ref(runConsumer), dataCounter = std::ref(dataCounter)]()
     {
-        Consumer<QueueT, DataT> consumer(queue, run);
+        Consumer<QueueT, DataT> consumer(queue, run, dataCounter);
         consumer.run();
     };
 
@@ -190,32 +196,35 @@ bool RunLockFreeQueueTest() {
         producerThreads.at(i).join();
     }
 
+    runConsumer = false;
+
     for (size_t i = 0; i < consumerThreads.size(); ++i) {
         consumerThreads.at(i).join();
     }
 
     bool okSnap = ok.load(std::memory_order_consume);
-    bool hasWorkSnap = queue.hasWork();
     bool hasDataSnap = queue.hasData();
 
+    std::cout << "Count of poped data: " << dataCounter.load(std::memory_order_acquire) << std::endl;
+
     std::cout << "okSnap: " << okSnap << "\n"
-              << "hasWorkSnap: " << hasWorkSnap << "\n"
-              << "hasDataSnap: " << hasDataSnap << "\n";
+              << "hasDataSnap: " << hasDataSnap << std::endl;
 
     return okSnap && // Verify we poped all the data in the queue
-        !hasWorkSnap && // We should have no pending work.
         !hasDataSnap; // We should have no pending data in the queue.
 }
 
 int main() {
-    std::cout << "Test Started!\n";
+    std::cout << "Test Started!" << std::endl;
 
-    if (RunLockFreeQueueTest()) {
+    for (int i = 0; i < 2*12; ++i){
+        if (!RunLockFreeQueueTest()) {
 
-        std::cout << "Test Passed!\n";
-        return 0;
+            std::cout << "Test Failed!" << std::endl;
+            return 1;
+        }
     }
 
-    std::cout << "Test Failed!\n";
-    return 1;
+    std::cout << "Test Passed!" << std::endl;
+    return 0;
 }

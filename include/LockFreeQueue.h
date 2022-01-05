@@ -40,10 +40,10 @@ public:
         SleepGranularity sleepDuration{ 0 };
         std::optional<size_t> pushIndex{ std::nullopt };
 
-        _pendingActions.fetch_add(2, std::memory_order_relaxed); // There is now 2 pending actions, to 
-                                                                 // succesfully push and pop the data.
-
-        _pendingData.fetch_add(1, std::memory_order_relaxed); // We are going to add data in the queue.
+        _pendingData.fetch_add(2, std::memory_order_relaxed); // We are going to add data in the queue.
+                                                              // We intentionally use 2 here in order to 
+                                                              // also use the atomic to prevent memory 
+                                                              // reordering in what follows.
 
         do
         {
@@ -78,16 +78,17 @@ public:
 
             _buffer.at(*pushIndex) = bufferItem;
 
-            _pendingActions.fetch_add(-1, std::memory_order_acq_rel); // We succesfully pushed data.
+            _pendingData.fetch_sub(1, std::memory_order_acq_rel); // We succesfully pushed data. Decrement the counter to 
+                                                                  // what it should be and also use the atomic to prevent 
+                                                                  // memory reordering.
+                                                                  // Use memory_order_acq_rel to prevent read/writes move.
 
             _isBusy.at(*pushIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
             return true; // We succesfully placed the data in the queue.
         }
 
-        _pendingActions.fetch_add(-2, std::memory_order_relaxed); // We cannot push any data.
-
-        _pendingData.fetch_add(-1, std::memory_order_relaxed); // We failed to add data in the queue.
+        _pendingData.fetch_sub(2, std::memory_order_relaxed); // We failed to add data in the queue.
 
         return false; // We did not have space to put the data into the queue.
     }
@@ -151,9 +152,8 @@ public:
 
             popedData = _buffer.at(*popIndex);
 
-            _pendingActions.fetch_add(-1, std::memory_order_acq_rel); // We succesfully poped data.
-
-            _pendingData.fetch_add(-1, std::memory_order_relaxed); // We removed data from the queue.
+            _pendingData.fetch_sub(1, std::memory_order_acq_rel); // We removed data from the queue.
+                                                                  // Use memory_order_acq_rel to prevent read/writes move.
 
             _isBusy.at(*popIndex).store(false, std::memory_order_relaxed); // Flag that we are done with the index
 
@@ -163,12 +163,12 @@ public:
         return false; // There was no new data available.
     }
 
-    bool hasData() { // Check if there is any data in the queue.
+    /** Check if there is data in the queue.
+     * 
+     * @return true if there is data in the queue, false otherwise.
+     */
+    bool hasData() {
         return _pendingData.load(std::memory_order_acquire) != 0;
-    }
-
-    bool hasWork() { // Check if there are any pending actions.
-        return _pendingActions.load(std::memory_order_acquire) != 0;
     }
 
 private:
@@ -187,7 +187,6 @@ private:
             sleepDuration += sleepDurationStep;
         }
 
-        std::this_thread::yield();
         std::this_thread::sleep_for(sleepDuration);
 
         return sleepDuration;
@@ -197,7 +196,6 @@ private:
     std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // the buffer if there is work pending on each index
     std::atomic<size_t> _head{ 0 }; // consumer index
     std::atomic<size_t> _tail{ 0 }; // producer index
-    std::atomic<long long> _pendingActions{ 0 }; // count pending actions
     std::atomic<long long> _pendingData{ 0 }; // count pending data in the queue
     std::atomic_bool _canUpdate{ true }; // critical section protection
     SleepGranularity sleepDurationStep{ 1 };
