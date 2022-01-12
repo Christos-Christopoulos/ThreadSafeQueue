@@ -212,5 +212,5 @@ private:
     std::atomic_bool _canUpdate{ true }; // critical section protection
     SleepGranularity sleepDurationStart{ -10 };
     SleepGranularity sleepDurationStep{ 1 };
-    SleepGranularity _maxSleepDuration{ 10 };
+    SleepGranularity _maxSleepDuration{ 1 };
 };
