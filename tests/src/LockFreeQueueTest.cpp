@@ -4,18 +4,6 @@
 #include <vector>
 #include <memory>
 
-std::chrono::nanoseconds backOff(std::chrono::nanoseconds sleepDuration) {
-
-    if (sleepDuration < std::chrono::nanoseconds{100}) {
-        sleepDuration += std::chrono::nanoseconds{1};
-    }
-
-    std::this_thread::yield();
-    std::this_thread::sleep_for(sleepDuration);
-
-    return sleepDuration;
-}
-
 class Printer
 {
 public:
@@ -78,7 +66,6 @@ public:
     ~Producer() = default;
 
     void run() {
-        std::chrono::nanoseconds sleepDuration{ 0 };
         while (_run.load(std::memory_order_relaxed)) {
             auto data = _dataGenerator.generate(_ok);
             while (!_queue.push(data)) { /*Keep trying until we succeed*/
@@ -86,9 +73,7 @@ public:
                     data->poped();
                     break;
                 }
-                sleepDuration = backOff(sleepDuration);
             };
-            sleepDuration = std::chrono::nanoseconds{ 0 };
         }
     }
 private:
@@ -109,16 +94,11 @@ public:
     ~Consumer() = default;
 
     void run() {
-        std::chrono::nanoseconds sleepDuration{ 0 };
         while (_run.load(std::memory_order_relaxed)) {
             TData data{};
             if (_queue.pop(data)) {
                 data->poped();
                 _dataCounter.fetch_add(1, std::memory_order_relaxed);
-                sleepDuration = std::chrono::nanoseconds{ 0 };
-            }
-            else {
-                sleepDuration = backOff(sleepDuration);
             }
         }
 
@@ -128,10 +108,6 @@ public:
             if (_queue.pop(data)) {
                 data->poped();
                 _dataCounter.fetch_add(1, std::memory_order_relaxed);
-                sleepDuration = std::chrono::nanoseconds{ 0 };
-            }
-            else{
-                sleepDuration = backOff(sleepDuration);
             }
         }
     }
