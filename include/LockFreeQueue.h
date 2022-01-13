@@ -47,29 +47,28 @@ public:
 
         do
         {
-            while (!_canUpdate.exchange(false, std::memory_order_acquire)) { /*Wait for access and check index positions.*/
-                sleepDuration = backOff(sleepDuration); // If we keep retrying, try not to overload the CPU
-            }
+            if (_canUpdate.exchange(false, std::memory_order_acquire)) { // Gain access and check index positions.
 
-            newTail = (_tail.load(std::memory_order_relaxed) + 1) % bufferSize; // Calculate the new tail
+                newTail = (_tail.load(std::memory_order_relaxed) + 1) % bufferSize; // Calculate the new tail
 
-            if (newTail != _head.load(std::memory_order_relaxed)) { // When _tail + 1 == _head we can not add.
+                if (newTail != _head.load(std::memory_order_relaxed)) { // When _tail + 1 == _head we can not add.
 
-                if (!_isBusy.at(_tail.load(std::memory_order_relaxed)
-                ).exchange(true, std::memory_order_relaxed)) { // Check that the index is not busy
+                    if (!_isBusy.at(_tail.load(std::memory_order_relaxed)
+                                         ).exchange(true, std::memory_order_relaxed)) { // Check that the index is not busy
 
-                    pushIndex = _tail.load(std::memory_order_relaxed);
-                    _tail.store(newTail, std::memory_order_relaxed);
+                        pushIndex = _tail.load(std::memory_order_relaxed);
+                        _tail.store(newTail, std::memory_order_relaxed);
 
+                        keepTrying = false;
+                    }
+                }
+                else {
                     keepTrying = false;
                 }
-            }
-            else {
-                keepTrying = false;
-            }
 
-            _canUpdate.store(true, std::memory_order_release); // Allow access to the critical section for other 
-                                                               // threads to update the indexes
+                _canUpdate.store(true, std::memory_order_release); // Allow access to the critical section for other 
+                                                                   // threads to update the indexes
+            }
 
             if (keepTrying) {
                 sleepDuration = backOff(sleepDuration); // If we keep retrying, try not to overload the CPU
@@ -120,32 +119,31 @@ public:
 
         do
         {
-            while (!_canUpdate.exchange(false, std::memory_order_acquire)) { /*Wait for access and check index positions.*/
-                sleepDuration = backOff(sleepDuration); // If we keep retrying, try not to overload the CPU
-            }
+            if (_canUpdate.exchange(false, std::memory_order_acquire)) { // Gain access and check index positions.
 
-            if (_head.load(std::memory_order_relaxed) !=
-                _tail.load(std::memory_order_relaxed)) { // When head == tail we can not remove
+                if (_head.load(std::memory_order_relaxed) !=
+                    _tail.load(std::memory_order_relaxed)) { // When head == tail we can not remove
 
-                if (!_isBusy.at(_head.load(std::memory_order_relaxed)
-                ).exchange(true, std::memory_order_relaxed)) { // Check that the producer thread managed 
-                                                               // to commit data to the _head index and the 
-                                                               // index is now not busy.
+                    if (!_isBusy.at(_head.load(std::memory_order_relaxed)
+                                         ).exchange(true, std::memory_order_relaxed)) { // Check that the producer thread managed 
+                                                                                        // to commit data to the _head index and the 
+                                                                                        // index is now not busy.
 
-                    popIndex = _head.load(std::memory_order_relaxed);
+                        popIndex = _head.load(std::memory_order_relaxed);
 
-                    _head.store((_head.load(std::memory_order_relaxed) + 1) % bufferSize,
-                        std::memory_order_relaxed); // Update the head;
+                        _head.store((_head.load(std::memory_order_relaxed) + 1) % bufferSize,
+                            std::memory_order_relaxed); // Update the head;
 
+                        keepTrying = false;
+                    }
+                }
+                else {
                     keepTrying = false;
                 }
-            }
-            else {
-                keepTrying = false;
-            }
 
-            _canUpdate.store(true, std::memory_order_release); // Allow access to the critical section for other 
-                                                               // threads to update the indexes
+                _canUpdate.store(true, std::memory_order_release); // Allow access to the critical section for other 
+                                                                   // threads to update the indexes
+            }
 
             if (keepTrying) {
                 sleepDuration = backOff(sleepDuration); // If we keep retrying, try not to overload the CPU
@@ -187,21 +185,17 @@ private:
      */
     SleepGranularity backOff(SleepGranularity sleepDuration) {
 
-        if (sleepDuration < SleepGranularity{ 0 }) {
-            std::this_thread::yield();
-            std::this_thread::sleep_for(SleepGranularity{ 0 });
+        std::this_thread::yield();
+
+        if (sleepDuration < sleepDurationStep) {
 
             return sleepDuration + sleepDurationStep;
         }
 
-        std::this_thread::yield();
         std::this_thread::sleep_for(sleepDuration);
 
-        if (sleepDuration < _maxSleepDuration) {
-            return sleepDuration + sleepDurationStep;
-        }
-
-        return sleepDurationStart;
+        return (sleepDuration < _maxSleepDuration)? 
+                    sleepDuration + sleepDurationStep: sleepDurationStart;
     }
 
     std::array<QueueItemT, bufferSize> _buffer{}; // the ring buffer
