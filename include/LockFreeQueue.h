@@ -194,8 +194,9 @@ private:
 
         std::this_thread::sleep_for(sleepDuration);
 
-        return (sleepDuration < _maxSleepDuration)? 
-                    sleepDuration + sleepDurationStep: sleepDurationStart;
+        return (sleepDuration < _maxSleepDuration)?
+                    sleepDuration + sleepDurationStep: // increment the sleep duration if we are below the max threashhold
+                    sleepDurationStart;                // otherwise reset the sleep duration to sleepDurationStart
     }
 
     std::array<QueueItemT, bufferSize> _buffer{}; // the ring buffer
@@ -204,7 +205,13 @@ private:
     std::atomic<size_t> _tail{ 0 }; // producer index
     std::atomic<long long> _pendingData{ 0 }; // count pending data in the queue
     std::atomic_bool _canUpdate{ true }; // critical section protection
-    SleepGranularity sleepDurationStart{ -10 };
-    SleepGranularity sleepDurationStep{ 1 };
-    SleepGranularity _maxSleepDuration{ 1 };
+
+    SleepGranularity sleepDurationStart{ -10 }; // the initial value of the sleepDuration. Adding sleepDurationStep, 
+                                                // until it reaches 1, translates to how many times we are going to 
+                                                // spin before going to sleep. eg, sleepDurationStart = -10 and 
+                                                // sleepDurationStep = 1 => we are going to spin 10 times before 
+                                                // going to sleep for some value of sleepDuration.
+
+    SleepGranularity sleepDurationStep{ 1 };    // the value by which we increment sleepDurationStart every time we spin.
+    SleepGranularity _maxSleepDuration{ 1 };    // the maximum time the thread can go to sleep for.
 };
