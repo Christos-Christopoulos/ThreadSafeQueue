@@ -121,7 +121,10 @@ bool RunLockFreeQueueTest() {
     using DataT = std::shared_ptr<QueueChecker>;
     using QueueT = LockFreeQueue<DataT, 100>;
 
-    QueueT queue{};
+    size_t numberOfProducers{ 8 };
+    size_t numberOfConsumers{ 8 };
+
+    QueueT queue{numberOfProducers+numberOfConsumers};
     std::atomic_bool ok{ true };
     DataGenerator dataGenerator{};
 
@@ -153,9 +156,6 @@ bool RunLockFreeQueueTest() {
 
     std::vector<std::thread> producerThreads{};
     std::vector<std::thread> consumerThreads{};
-
-    size_t numberOfProducers{ 8 };
-    size_t numberOfConsumers{ 8 };
 
     for (size_t i = 0; i < numberOfProducers; ++i) {
         producerThreads.emplace_back(producerRoutine);

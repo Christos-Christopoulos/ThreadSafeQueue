@@ -6,14 +6,34 @@
 #include <atomic>
 #include <thread>
 #include <optional>
+#include <cmath>
 
 template<typename QueueItemT, size_t bufferSize>
 class LockFreeQueue {
 
     using SleepGranularity = std::chrono::nanoseconds;
+
 public:
 
-    LockFreeQueue() = default;
+    LockFreeQueue() = delete;
+
+    /** A constructor which takes the total number of consumer+producer threads
+     *  as argument. This will subsequently be used to define how many times a 
+     *  thread will spin before going to sleep.
+     * 
+     *  If a custom spin count is provided, the number of threads is ignored and 
+     *  the custom spin count is used, as is, instead.
+     *
+     *  @arg numberOfThreads - the total number of consumer+producer threads.
+     *  @arg customSpinCount - the times a thread will spin before going to sleep.
+     */
+    LockFreeQueue(std::optional<size_t> numberOfThreads = std::nullopt,
+                  std::optional<size_t> customSpinCount = std::nullopt)
+    : sleepDurationStart{numberOfThreads.has_value()?-spinCount(*numberOfThreads):
+                         customSpinCount.has_value()?*customSpinCount:
+                         10} // If no number of threads or custom spin count was defined, we will default to a spin count of 10.
+    {}
+
     ~LockFreeQueue() = default;
 
     // Make the queue non copyable.
@@ -199,6 +219,24 @@ private:
                     sleepDurationStart;                // otherwise reset the sleep duration to sleepDurationStart
     }
 
+    /** Approximate spins.
+     *
+     *  The purpose of the "spinCount" function is to aproximate the 
+     *  number of times a consumer/producer thread is going to spin 
+     *  before going to sleep.
+     *
+     *  @arg numberOfThreads - total number of consumer+producer threads.
+     *
+     *  @return the number of times a consumer/producer thread is going 
+     *          to spin before going to sleep.
+     */
+    int spinCount(size_t numberOfThreads) {
+        return 86.404/std::pow(numberOfThreads, 0.691); // This is an approximation based on ~10million pops per 2 minutes 
+                                                        // performance within reasonable CPU load. The approximation was 
+                                                        // derived using a 4-core CPU. This approximation will probably need 
+                                                        // to be re-evaluated based on the CPU cores.
+    }
+
     std::array<QueueItemT, bufferSize> _buffer{}; // the ring buffer
     std::array<std::atomic_bool, bufferSize> _isBusy{ false }; // the buffer if there is work pending on each index
     std::atomic<size_t> _head{ 0 }; // consumer index
@@ -206,12 +244,12 @@ private:
     std::atomic<long long> _pendingData{ 0 }; // count pending data in the queue
     std::atomic_bool _canUpdate{ true }; // critical section protection
 
-    SleepGranularity sleepDurationStart{ -10 }; // the initial value of the sleepDuration. Adding sleepDurationStep, 
-                                                // until it reaches 1, translates to how many times we are going to 
-                                                // spin before going to sleep. eg, sleepDurationStart = -10 and 
-                                                // sleepDurationStep = 1 => we are going to spin 10 times before 
-                                                // going to sleep for some value of sleepDuration.
+    SleepGranularity sleepDurationStart{};   // the initial value of the sleepDuration. Adding sleepDurationStep, 
+                                             // until it reaches 1, translates to how many times we are going to 
+                                             // spin before going to sleep. eg, sleepDurationStart = -10 and 
+                                             // sleepDurationStep = 1 => we are going to spin 10 times before 
+                                             // going to sleep for some value of sleepDuration.
 
-    SleepGranularity sleepDurationStep{ 1 };    // the value by which we increment sleepDurationStart every time we spin.
-    SleepGranularity _maxSleepDuration{ 1 };    // the maximum time the thread can go to sleep for.
+    SleepGranularity sleepDurationStep{ 1 }; // the value by which we increment sleepDurationStart every time we spin.
+    SleepGranularity _maxSleepDuration{ 1 }; // the maximum time the thread can go to sleep for.
 };
